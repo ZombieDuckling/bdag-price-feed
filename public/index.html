@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BDAG Price Feed</title>
+  <style>
+    :root {
+      --bg: #06080f;
+      --panel: #0e1324;
+      --line: #2ef2ff;
+      --text: #eaf2ff;
+      --muted: #99a7cc;
+      --good: #4cff9a;
+      --bad: #ff5a7d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: radial-gradient(1200px 600px at 15% -10%, #12243f 0%, transparent 60%), var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+    .card {
+      width: min(1000px, 95vw);
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent), var(--panel);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 20px 80px rgba(0,0,0,0.45);
+    }
+    .top { display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; align-items:flex-start; }
+    .price { font-size: clamp(2.2rem, 6vw, 4rem); font-weight: 800; letter-spacing: -1px; }
+    .meta { color: var(--muted); font-size: .92rem; }
+    .chip { border:1px solid rgba(255,255,255,.2); border-radius:999px; padding:5px 10px; font-size:.8rem; color:var(--muted); }
+    .chg { font-weight:700; }
+    .chg.up { color: var(--good); }
+    .chg.down { color: var(--bad); }
+    canvas { width: 100%; height: 360px; margin-top: 14px; background: linear-gradient(180deg, rgba(46,242,255,.07), rgba(46,242,255,0)); border-radius: 14px; }
+    .foot { margin-top: 10px; color: var(--muted); font-size: .8rem; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="top">
+      <div>
+        <div class="chip">CoinMarketCap · BDAG live feed</div>
+        <div class="price" id="price">--</div>
+        <div class="meta">24h change: <span id="change" class="chg">--</span></div>
+      </div>
+      <div class="meta" id="updated">Loading…</div>
+    </div>
+    <canvas id="chart" width="1200" height="360"></canvas>
+    <div class="foot">
+      <span id="range">Waiting for samples…</span>
+      <span>Auto refresh: every 10s (source pull every 30s)</span>
+    </div>
+  </main>
+
+  <script>
+    const priceEl = document.getElementById('price');
+    const changeEl = document.getElementById('change');
+    const updatedEl = document.getElementById('updated');
+    const rangeEl = document.getElementById('range');
+    const canvas = document.getElementById('chart');
+    const ctx = canvas.getContext('2d');
+
+    function fmtMoney(v, max=6){
+      if (v == null || Number.isNaN(v)) return '--';
+      return '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: max });
+    }
+
+    function draw(history){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      if (!history?.length) return;
+
+      const values = history.map(p => p.p);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const pad = (max-min || 0.000001) * 0.15;
+      const lo = min - pad;
+      const hi = max + pad;
+
+      const x = i => (i/(history.length-1||1))*canvas.width;
+      const y = v => canvas.height - ((v-lo)/(hi-lo))*canvas.height;
+
+      ctx.strokeStyle = 'rgba(255,255,255,.14)';
+      ctx.lineWidth = 1;
+      for (let i=1;i<=4;i++) {
+        const gy = (canvas.height/5)*i;
+        ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(canvas.width,gy); ctx.stroke();
+      }
+
+      const grad = ctx.createLinearGradient(0,0,canvas.width,0);
+      grad.addColorStop(0,'#2ef2ff');
+      grad.addColorStop(1,'#4cff9a');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      history.forEach((p,i)=>{
+        const px = x(i), py = y(p.p);
+        if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+      });
+      ctx.stroke();
+    }
+
+    async function refresh(){
+      const res = await fetch('/api/price');
+      const data = await res.json();
+      if (!data.ok || !data.snapshot) {
+        updatedEl.textContent = 'Feed error: ' + (data.error || 'unknown');
+        return;
+      }
+
+      const s = data.snapshot;
+      priceEl.textContent = fmtMoney(s.price, 8);
+      const ch = Number(s.percentChange24h);
+      changeEl.textContent = Number.isFinite(ch) ? `${ch.toFixed(2)}%` : '--';
+      changeEl.className = 'chg ' + (ch >= 0 ? 'up' : 'down');
+      updatedEl.textContent = 'Updated: ' + new Date(s.timestamp).toLocaleString();
+
+      const hist = data.history || [];
+      draw(hist);
+      if (hist.length > 1) {
+        const a = hist[0], b = hist[hist.length-1];
+        rangeEl.textContent = `Range: ${new Date(a.t).toLocaleTimeString()} → ${new Date(b.t).toLocaleTimeString()} · ${hist.length} samples`;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
