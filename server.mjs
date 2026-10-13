@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, 'public');
-const PORT = 8192;
+const PORT = Number(process.env.PORT) || 8192;
 
 const history = [];
 const MAX_POINTS = 240; // ~2h at 30s intervals
@@ -69,12 +69,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const filePath = url.pathname === '/'
-      ? path.join(publicDir, 'index.html')
-      : path.join(publicDir, url.pathname.replace(/^\//, ''));
+    const requestedPath = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.replace(/^\//, ''));
+    const safePath = path.normalize(path.join(publicDir, requestedPath));
+    const relativePath = path.relative(publicDir, safePath);
 
-    const safePath = path.normalize(filePath);
-    if (!safePath.startsWith(publicDir)) {
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
       res.statusCode = 403;
       res.end('Forbidden');
       return;
@@ -92,9 +91,13 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', contentType);
     res.end(data);
   } catch (err) {
-    res.statusCode = 500;
+    const isMissingFile = err && typeof err === 'object' && err.code === 'ENOENT';
+    res.statusCode = isMissingFile ? 404 : 500;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+    res.end(JSON.stringify({
+      ok: false,
+      error: isMissingFile ? 'Not found' : (err instanceof Error ? err.message : String(err)),
+    }));
   }
 });
 
